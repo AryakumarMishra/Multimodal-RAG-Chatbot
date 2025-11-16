@@ -12,6 +12,9 @@ import torch
 from PIL import Image
 
 import pymupdf
+import fitz
+import os
+import uuid
 
 import speech_recognition as sr 
 import os 
@@ -43,14 +46,57 @@ def process_images(image):
 
 # Function to process PDFs
 def process_pdf(pdf):
-    pdf_response = []
+    pdf_text_response = []
+    pdf_table_response = []
+    pdf_imgs_response = []
 
-    doc = pymupdf.open('documents/sample.pdf')
+    doc = fitz.open(pdf)
     for page in doc:
-        text = page.get_text()
-        pdf_response.append(text)
 
-    return pdf_response
+        # Getting the text
+        text = page.get_text()
+        pdf_text_response.append(text)
+
+        # Getting the tables
+        tabs = page.find_tables() #type:ignore
+        for t in tabs:
+            tables = t.extract()
+            clean_rows = ["\t".join(map(str, row)) for row in tables]
+            clean_table = "\n".join(clean_rows)
+            pdf_table_response.append(clean_table)
+
+        # Getting the images
+        img_folder = 'extracted-images'
+        os.makedirs(img_folder, exist_ok=True)
+
+        for page in doc:
+            for img in page.get_images(full=True):
+                xref = img[0]
+                pix = fitz.Pixmap(doc, xref)
+
+                uid = uuid.uuid4().hex
+                img_name = f"img_{page.number}_{xref}_{uid}.png"
+                img_path = os.path.join(img_folder, img_name)
+
+                if pix.n < 5:
+                    pix.save(img_path)
+                else:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                    pix.save(img_path)
+
+                del pix
+
+                pdf_imgs_response.append({
+                    "page": page.number,
+                    "xref": xref,
+                    "path": img_path
+                })
+
+    return {
+        'text' : pdf_text_response,
+        'tables' : pdf_table_response,
+        'images' : pdf_imgs_response
+    }
 
 
 # Function to process Audios
@@ -67,9 +113,9 @@ def process_audio(path):
     and apply speech recognition on each of these chunks"""
     sound = AudioSegment.from_file(path)  
     chunks = split_on_silence(sound,
-        min_silence_len = 500,
+        min_silence_len = 700,
         silence_thresh = sound.dBFS-14,
-        keep_silence=500,
+        keep_silence=700,
     )
     folder_name = "audio-chunks"
     if not os.path.isdir(folder_name):
@@ -133,21 +179,40 @@ def add_to_vector_store(data_dict, source_name):
     elif isinstance(data_dict, list):
         all_texts = []
         all_captions = []
+
         for item in data_dict:
             if isinstance(item, dict):
-                all_texts.append(item.get("text", ""))
-                if item.get("caption"):
-                    all_captions.append(item["caption"])
+                text_val = item.get("text", "")
+                caption_val = item.get("caption")
+
+                if isinstance(text_val, list):
+                    text_val = "\n".join(map(str, text_val))
+                if isinstance(caption_val, list):
+                    caption_val = "\n".join(map(str, caption_val))
+
+                all_texts.append(text_val)
+                if caption_val:
+                    all_captions.append(caption_val)
+
             elif isinstance(item, str):
                 all_texts.append(item)
+
             else:
                 raise TypeError(f"Unexpected item type in list: {type(item)}")
+
         combined_text = "\n".join(all_texts)
+
         if all_captions:
             combined_caption = "\n".join(all_captions)
 
     else:
         raise TypeError(f"Unexpected data_dict type: {type(data_dict)}")
+
+    if isinstance(combined_text, list):
+        combined_text = "\n".join(map(str, combined_text))
+
+    if isinstance(combined_caption, list):
+        combined_caption = "\n".join(map(str, combined_caption))
 
     if combined_caption:
         combined_text += f"\nCaption: {combined_caption}"
@@ -159,6 +224,7 @@ def add_to_vector_store(data_dict, source_name):
 
     vector_store.add_documents([doc])
     return doc
+
 
 
 def retrieve_from_vector_store():
