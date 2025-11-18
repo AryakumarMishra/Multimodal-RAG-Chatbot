@@ -247,6 +247,9 @@ def add_to_vector_store(data_dict, source_name):
         )
         docs.append(doc)
 
+    vector_store.add_documents(docs)
+    return docs
+
 
 def retrieve_from_vector_store():
     return vector_store.as_retriever(search_kwargs={"k": 5})
