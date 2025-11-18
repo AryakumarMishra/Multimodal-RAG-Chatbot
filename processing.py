@@ -168,6 +168,22 @@ vector_store = FAISS(
     index_to_docstore_id={}
 )
 
+
+def chunk_text(text, chunk_size=500, chunk_overlap=100):
+    chunks = []
+    start = 0
+    text_length = len(text)
+
+    while start < text_length:
+        end = start + chunk_size
+        chunk = text[start:end]
+
+        chunks.append(chunk)
+        start = end - chunk_overlap
+
+    return chunks
+
+
 def add_to_vector_store(data_dict, source_name):
     combined_text = ""
     combined_caption = None
@@ -217,14 +233,19 @@ def add_to_vector_store(data_dict, source_name):
     if combined_caption:
         combined_text += f"\nCaption: {combined_caption}"
 
-    doc = Document(
-        page_content=combined_text,
-        metadata={"caption": combined_caption, "source": source_name}
-    )
+    chunks = chunk_text(combined_text, chunk_size=800, chunk_overlap=150)
 
-    vector_store.add_documents([doc])
-    return doc
-
+    docs = []
+    for i, chunk in enumerate(chunks):
+        doc = Document(
+            page_content=chunk,
+            metadata={
+                "caption": combined_caption,
+                "source": source_name,
+                "chunk_id": i
+            }
+        )
+        docs.append(doc)
 
 
 def retrieve_from_vector_store():
